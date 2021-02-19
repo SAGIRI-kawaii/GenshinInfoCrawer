@@ -417,8 +417,6 @@ class GenshinInfoCrawer:
                     ps = weapon_story_div.find_all("p")
                     story_text = "\n".join([p.get_text().strip() for p in ps])
                     weapon_data["相关故事"] = story_text
-                    # return None
+                    data_dict[weapon_type][weapon_name]["info"] = weapon_data
         return data_dict
 
-
-GenshinInfoCrawer.get_weapon_info()
