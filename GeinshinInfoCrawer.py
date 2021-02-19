@@ -286,5 +286,139 @@ class GenshinInfoCrawer:
 
         return data_dict
 
+    @staticmethod
+    def get_weapon_info():
+        print("get_weapon_info")
+        base_url = "https://bbs.mihoyo.com"
+        url = "https://bbs.mihoyo.com/ys/obc/channel/map/5?bbs_presentation_style=no_header"
+        data_dict = {}
+        try:
+            resp = requests.get(url)
+            if resp.status_code != 200:
+                print("response code:", resp.status_code)
+                return None
+        except TimeoutError:
+            print("网络超时")
+            return None
+        html = resp.text
+        soup = BeautifulSoup(html, "html.parser")
+        weapon_ul = soup.find("ul", {"class": "channel-list"})
+        weapon_h3s = weapon_ul.find_all("h3")
+        weapon_uls = weapon_ul.find_all("ul", {"class": "position-list__list position-list__list--default"})
+        if len(weapon_h3s) == len(weapon_uls):
+            for i in range(len(weapon_h3s)):
+                weapon_type = weapon_h3s[i].get_text().strip()
+                data_dict[weapon_type] = {}
+                weapon_as = weapon_uls[i].find_all("a")
+                for a in weapon_as:
+                    weapon_name = a["title"]
+                    weapon_url = base_url + a["href"]
+                    data_dict[weapon_type][weapon_name] = {"url": weapon_url}
+                    if img := a.find_all("img"):
+                        data_dict[weapon_type][weapon_name]["icon"] = img[0]["data-src"].split("?")[0]
+                    print(weapon_name, weapon_url)
+                    try:
+                        weapon_resp = requests.get(weapon_url)
+                        if weapon_resp.status_code != 200:
+                            print("response code:", weapon_resp.status_code)
+                            return None
+                    except TimeoutError:
+                        print("网络超时")
+                        return None
+                    weapon_html = weapon_resp.text
+                    weapon_soup = BeautifulSoup(weapon_html, "html.parser")
+                    weapon_data = {}
 
-print(GenshinInfoCrawer.get_character_info())
+                    # 主要信息部分
+                    weapon_main = weapon_soup.find("div", {"data-part": "main"})
+                    tds = weapon_main.find_all("td")
+                    for td in tds:
+                        if label := td.find_all("label"):
+                            key = label[0].get_text().strip()
+                            value = td.get_text().replace(key, "").strip()
+                            if key == "星级：":
+                                weapon_data[key.replace("：", "")] = len(td.find_all("i"))
+                            else:
+                                weapon_data[key.replace("：", "")] = value
+                    # print(weapon_data)
+
+                    # 装备描述部分
+                    weapon_data["skills"] = []
+                    weapon_description = weapon_soup.find("div", {"data-part": "description"})
+                    tds = weapon_description.find_all("td")
+                    for td in tds:
+                        if strong := td.find_all("strong"):
+                            skill = "".join([skl.get_text().strip() for skl in strong])
+                            skill_name = skill.split("·")[0].strip()
+                            skill_description = skill.split("·")[1].strip()
+                            weapon_data["skills"].append({skill_name: skill_description})
+                            ps = td.find_all("p")
+                            weapon_data["description"] = ps[len(ps) - 1].get_text().strip()
+                        elif "：" in td.get_text():
+                            weapon_data[td.get_text().strip().split("：")[0]] = td.get_text().strip().split("：")[1]
+                    # print(weapon_data)
+
+                    # 成长数值部分
+                    weapon_value = weapon_soup.find("div", {"data-part": "value"})
+                    uls = weapon_value.find_all("ul")
+                    levels = uls[0].find_all("li")
+                    values = uls[1].find_all("li", {"data-target": "value.data"})
+                    weapon_data["属性"] = {}
+                    if len(levels) == len(values):
+                        for j in range(len(levels)):
+                            level = levels[j].get_text().strip()
+                            weapon_data["属性"][level] = {}
+                            trs = values[j].find_all("tr")
+                            tds = trs[1].find_all("td")
+                            lis = tds[0].find_all("li")
+                            weapon_data["属性"][level]["初始基础数值"] = {}
+                            for li in lis:
+                                text_list = ["", ""]
+                                if ":" in li.get_text():
+                                    text_list = li.get_text().strip().split(":")
+                                elif "：" in li.get_text():
+                                    text_list = li.get_text().strip().split("：")
+                                weapon_data["属性"][level]["初始基础数值"][text_list[0].strip()] = text_list[1].strip()
+
+                            lis = tds[1].find_all("li")
+                            weapon_data["属性"][level]["平均每级提升"] = {}
+                            for li in lis:
+                                text_list = ["", ""]
+                                if ":" in li.get_text():
+                                    text_list = li.get_text().strip().split(":")
+                                elif "：" in li.get_text():
+                                    text_list = li.get_text().strip().split("：")
+                                weapon_data["属性"][level]["平均每级提升"][text_list[0]] = text_list[1]
+                            if level not in ["1级", "90级"]:
+                                weapon_data["属性"][level]["突破材料"] = []
+                                for k in range(2, len(trs)):
+                                    materials_divs = trs[k].find_all("div")
+                                    for materials_div in materials_divs:
+                                        materials_div_text = materials_div.get_text().strip()
+                                        materials_name = materials_div_text.split("*")[0].strip()
+                                        materials_quantity = int(materials_div_text.split("*")[1].strip())
+                                        if a := materials_div.find_all("a"):
+                                            materials_url = base_url + a[0]["href"]
+                                        else:
+                                            materials_url = ""
+                                        if img := materials_div.find_all("img"):
+                                            icon = img[0]["src"]
+                                        else:
+                                            icon = ""
+                                        weapon_data["属性"][level]["突破材料"].append({
+                                            "name": materials_name,
+                                            "quantity": materials_quantity,
+                                            "url": materials_url,
+                                            "icon": icon
+                                        })
+
+                    # 相关故事部分
+                    weapon_story_div = weapon_soup.find("div", {"class": "obc-tmpl__rich-text obc-tmpl__paragraph-box"})
+                    ps = weapon_story_div.find_all("p")
+                    story_text = "\n".join([p.get_text().strip() for p in ps])
+                    weapon_data["相关故事"] = story_text
+                    # return None
+        return data_dict
+
+
+GenshinInfoCrawer.get_weapon_info()
